@@ -3,7 +3,7 @@
     const ARJS = {};
     
     // Main SDK container
-    ARJS.createARExperience = function(modelURL = "https://sketchfab.com/models/890fdf41d5e14d7da6288cfa1aaaa084/embed") {
+    ARJS.createARExperience = function(modelId = "890fdf41d5e14d7da6288cfa1aaaa084") {
         // Create main container
         const container = document.createElement('div');
         container.id = 'ar-sdk-container';
@@ -39,8 +39,9 @@
         modelContainer.style.alignItems = 'center';
         container.appendChild(modelContainer);
         
-        // Create iframe for the 3D model
+        // Create iframe for the 3D model with transparent background
         const modelFrame = document.createElement('iframe');
+        modelFrame.id = "sketchfab-frame";
         modelFrame.title = "AR 3D Model";
         modelFrame.frameBorder = "0";
         modelFrame.allowFullscreen = true;
@@ -51,11 +52,19 @@
         modelFrame.setAttribute("execution-while-out-of-viewport", "");
         modelFrame.setAttribute("execution-while-not-rendered", "");
         modelFrame.setAttribute("web-share", "");
-        modelFrame.src = modelURL;
+        // Use API parameters for transparent background
+        modelFrame.src = `https://sketchfab.com/models/${modelId}/embed?autostart=1&ui_infos=0&ui_controls=0&ui_stop=0&transparent=1&ui_watermark=0&ui_help=0&ui_settings=0&ui_inspector=0&ui_annotations=0`;
         modelFrame.style.width = '80%';
         modelFrame.style.height = '60%';
+        modelFrame.style.backgroundColor = 'transparent';
         modelFrame.style.pointerEvents = 'auto'; // Allow interaction with the model
         modelContainer.appendChild(modelFrame);
+        
+        // Load Sketchfab API script
+        const sketchfabApiScript = document.createElement('script');
+        sketchfabApiScript.src = 'https://static.sketchfab.com/api/sketchfab-viewer-1.12.1.js';
+        sketchfabApiScript.async = true;
+        document.head.appendChild(sketchfabApiScript);
         
         // Create UI controls container
         const controlsContainer = document.createElement('div');
@@ -122,11 +131,44 @@
                     statusIndicator.style.opacity = '0';
                     statusIndicator.style.transition = 'opacity 0.5s ease-out';
                 }, 2000);
+                
+                // Initialize Sketchfab API when camera is ready
+                initSketchfabAPI();
             } catch (error) {
                 console.error('Error accessing camera:', error);
                 statusIndicator.innerText = 'Camera access denied';
                 statusIndicator.style.backgroundColor = 'rgba(255, 0, 0, 0.7)';
             }
+        }
+        
+        // Function to initialize Sketchfab API
+        function initSketchfabAPI() {
+            // Wait for API to load
+            if (typeof window.Sketchfab !== 'function') {
+                setTimeout(initSketchfabAPI, 100);
+                return;
+            }
+            
+            const iframe = document.getElementById('sketchfab-frame');
+            const client = new window.Sketchfab(iframe);
+            
+            client.init(modelFrame.src, {
+                success: function onSuccess(api) {
+                    api.start();
+                    api.addEventListener('viewerready', function() {
+                        // Set transparent background when viewer is ready
+                        api.setBackground({
+                            color: [0, 0, 0, 0] // RGBA with 0 alpha for transparency
+                        });
+                    });
+                },
+                error: function onError() {
+                    console.error('Sketchfab API initialization failed');
+                    statusIndicator.innerText = 'Failed to load 3D model';
+                    statusIndicator.style.backgroundColor = 'rgba(255, 0, 0, 0.7)';
+                    statusIndicator.style.opacity = '1';
+                }
+            });
         }
         
         // Function to take screenshot
@@ -172,6 +214,11 @@
             if (container.parentNode) {
                 container.parentNode.removeChild(container);
             }
+            // Remove the Sketchfab API script
+            const apiScript = document.querySelector('script[src="https://static.sketchfab.com/api/sketchfab-viewer-1.12.1.js"]');
+            if (apiScript && apiScript.parentNode) {
+                apiScript.parentNode.removeChild(apiScript);
+            }
         }
         
         // Event listeners
@@ -185,8 +232,10 @@
                 initCamera();
             },
             stop: closeAR,
-            setModel: function(newModelURL) {
-                modelFrame.src = newModelURL;
+            setModel: function(newModelId) {
+                modelFrame.src = `https://sketchfab.com/models/${newModelId}/embed?autostart=1&ui_infos=0&ui_controls=0&ui_stop=0&transparent=1&ui_watermark=0&ui_help=0&ui_settings=0&ui_inspector=0&ui_annotations=0`;
+                // Re-initialize the Sketchfab API with the new model
+                initSketchfabAPI();
             }
         };
     };
