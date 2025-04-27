@@ -83,36 +83,54 @@
         statusIndicator.innerText = 'Initializing camera...';
         container.appendChild(statusIndicator);
         
-        // Stream variable to store camera stream
+        // Variables
         let stream = null;
-        // Three.js variables
+        let THREE = null;
         let scene, camera, renderer, model, mixer, clock;
         let isModelLoaded = false;
 
-        // Load Three.js script
-        function loadThreeJS() {
+        // Function to load a script
+        function loadScript(url) {
             return new Promise((resolve, reject) => {
                 const script = document.createElement('script');
-                script.src = 'https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js';
+                script.src = url;
+                script.async = true;
                 script.onload = resolve;
-                script.onerror = reject;
+                script.onerror = (e) => {
+                    console.error(`Failed to load script: ${url}`, e);
+                    reject(new Error(`Failed to load script: ${url}`));
+                };
                 document.head.appendChild(script);
             });
         }
 
-        // Load GLTFLoader script
-        function loadGLTFLoader() {
-            return new Promise((resolve, reject) => {
-                const script = document.createElement('script');
-                script.src = 'https://cdn.jsdelivr.net/npm/three@0.149.0/examples/js/loaders/GLTFLoader.js';
-                script.onload = resolve;
-                script.onerror = reject;
-                document.head.appendChild(script);
-            });
+        // Load required scripts
+        async function loadDependencies() {
+            statusIndicator.innerText = 'Loading 3D engine...';
+            
+            try {
+                // Load Three.js core from cdnjs (more reliable)
+                await loadScript('https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js');
+                THREE = window.THREE; // Capture THREE object
+                
+                // Load GLTFLoader
+                await loadScript('https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/examples/js/loaders/GLTFLoader.js');
+                
+                // Setup Three.js scene
+                setupThreeScene();
+                
+                // Load the model
+                loadModel(glbPath);
+                
+            } catch (error) {
+                console.error('Failed to load dependencies:', error);
+                statusIndicator.innerText = 'Failed to load 3D engine. Please try again.';
+                statusIndicator.style.backgroundColor = 'rgba(255, 0, 0, 0.7)';
+            }
         }
 
-        // Initialize Three.js scene
-        function initThreeJS() {
+        // Setup Three.js scene
+        function setupThreeScene() {
             scene = new THREE.Scene();
             
             // Camera setup
@@ -128,19 +146,52 @@
             renderer.setClearColor(0x000000, 0); // Transparent background
             
             // Lighting
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
             scene.add(ambientLight);
             
-            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-            directionalLight.position.set(0, 1, 1);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+            directionalLight.position.set(1, 1, 1);
             scene.add(directionalLight);
             
-            // Load model
-            const loader = new THREE.GLTFLoader();
+            // Initialize clock for animations
             clock = new THREE.Clock();
             
+            // Handle window resize
+            window.addEventListener('resize', function() {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+            
+            // Start animation loop
+            animate();
+        }
+        
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            if (model) {
+                model.rotation.y += 0.005; // Slow rotation for effect
+            }
+            
+            if (mixer) {
+                mixer.update(clock.getDelta());
+            }
+            
+            if (renderer && scene && camera) {
+                renderer.render(scene, camera);
+            }
+        }
+        
+        // Load 3D model
+        function loadModel(modelPath) {
+            statusIndicator.innerText = 'Loading 3D model...';
+            
+            const loader = new THREE.GLTFLoader();
+            
             loader.load(
-                glbPath, // URL of the GLB file
+                modelPath,
                 function(gltf) {
                     model = gltf.scene;
                     
@@ -175,8 +226,10 @@
                     }, 2000);
                 },
                 function(xhr) {
-                    const percent = xhr.loaded / xhr.total * 100;
-                    statusIndicator.innerText = `Loading model: ${Math.round(percent)}%`;
+                    if (xhr.lengthComputable) {
+                        const percent = xhr.loaded / xhr.total * 100;
+                        statusIndicator.innerText = `Loading model: ${Math.round(percent)}%`;
+                    }
                 },
                 function(error) {
                     console.error('Error loading GLB model:', error);
@@ -184,30 +237,6 @@
                     statusIndicator.style.backgroundColor = 'rgba(255, 0, 0, 0.7)';
                 }
             );
-            
-            // Handle window resize
-            window.addEventListener('resize', function() {
-                camera.aspect = window.innerWidth / window.innerHeight;
-                camera.updateProjectionMatrix();
-                renderer.setSize(window.innerWidth, window.innerHeight);
-            });
-            
-            // Animation loop
-            function animate() {
-                requestAnimationFrame(animate);
-                
-                if (model) {
-                    model.rotation.y += 0.005; // Slow rotation for effect
-                }
-                
-                if (mixer) {
-                    mixer.update(clock.getDelta());
-                }
-                
-                renderer.render(scene, camera);
-            }
-            
-            animate();
         }
         
         // Function to initialize the camera
@@ -218,18 +247,10 @@
                     audio: false 
                 });
                 video.srcObject = stream;
-                statusIndicator.innerText = 'Camera ready, loading model...';
+                statusIndicator.innerText = 'Camera ready';
                 
-                // Load Three.js dependencies
-                try {
-                    await loadThreeJS();
-                    await loadGLTFLoader();
-                    initThreeJS();
-                } catch (error) {
-                    console.error('Error loading Three.js:', error);
-                    statusIndicator.innerText = 'Failed to load 3D engine';
-                    statusIndicator.style.backgroundColor = 'rgba(255, 0, 0, 0.7)';
-                }
+                // Now load Three.js and other dependencies
+                await loadDependencies();
                 
             } catch (error) {
                 console.error('Error accessing camera:', error);
@@ -295,6 +316,9 @@
             // Stop animation loop and release resources
             if (renderer) {
                 renderer.dispose();
+                if (renderer.domElement && renderer.domElement.parentElement) {
+                    renderer.domElement.parentElement.removeChild(renderer.domElement);
+                }
             }
             
             if (container.parentNode) {
@@ -306,7 +330,7 @@
         closeButton.addEventListener('click', closeAR);
         screenshotButton.addEventListener('click', takeScreenshot);
         
-        // Adding interactive model controls
+        // Add interactive model controls
         let isDragging = false;
         let previousMousePosition = { x: 0, y: 0 };
         
@@ -381,63 +405,21 @@
                 initCamera();
             },
             stop: closeAR,
-            setModel: function(newGlbPath) {
+            setModel: function(newModelPath) {
                 // Remove current model if exists
-                if (model) {
+                if (model && scene) {
                     scene.remove(model);
                 }
                 
                 // Load new model
-                glbPath = newGlbPath;
-                isModelLoaded = false;
-                statusIndicator.innerText = 'Loading new model...';
-                statusIndicator.style.opacity = '1';
-                
-                const loader = new THREE.GLTFLoader();
-                loader.load(
-                    glbPath,
-                    function(gltf) {
-                        model = gltf.scene;
-                        
-                        // Center the model
-                        const box = new THREE.Box3().setFromObject(model);
-                        const center = box.getCenter(new THREE.Vector3());
-                        model.position.x = -center.x;
-                        model.position.y = -center.y;
-                        model.position.z = -center.z;
-                        
-                        // Scale model to reasonable size
-                        const size = box.getSize(new THREE.Vector3());
-                        const maxDim = Math.max(size.x, size.y, size.z);
-                        const scale = 2 / maxDim; // Adjust as needed
-                        model.scale.set(scale, scale, scale);
-                        
-                        // Add model to scene
-                        scene.add(model);
-                        
-                        // Setup animation if available
-                        if (gltf.animations && gltf.animations.length) {
-                            mixer = new THREE.AnimationMixer(model);
-                            const action = mixer.clipAction(gltf.animations[0]);
-                            action.play();
-                        }
-                        
-                        isModelLoaded = true;
-                        statusIndicator.innerText = 'Model loaded successfully';
-                        setTimeout(() => {
-                            statusIndicator.style.opacity = '0';
-                        }, 2000);
-                    },
-                    function(xhr) {
-                        const percent = xhr.loaded / xhr.total * 100;
-                        statusIndicator.innerText = `Loading model: ${Math.round(percent)}%`;
-                    },
-                    function(error) {
-                        console.error('Error loading GLB model:', error);
-                        statusIndicator.innerText = 'Failed to load 3D model';
-                        statusIndicator.style.backgroundColor = 'rgba(255, 0, 0, 0.7)';
-                    }
-                );
+                if (THREE && THREE.GLTFLoader) {
+                    loadModel(newModelPath);
+                } else {
+                    console.error('THREE.js not loaded yet');
+                    statusIndicator.innerText = 'Error: 3D engine not ready';
+                    statusIndicator.style.opacity = '1';
+                    statusIndicator.style.backgroundColor = 'rgba(255, 0, 0, 0.7)';
+                }
             }
         };
     };
