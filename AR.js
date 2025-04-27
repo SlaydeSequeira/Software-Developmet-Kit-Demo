@@ -3,7 +3,7 @@
     const ARJS = {};
     
     // Main SDK container
-    ARJS.createARExperience = function(modelId = "890fdf41d5e14d7da6288cfa1aaaa084") {
+    ARJS.createARExperience = function(glbPath = "fast-food.glb") {
         // Create main container
         const container = document.createElement('div');
         container.id = 'ar-sdk-container';
@@ -13,8 +13,6 @@
         container.style.width = '100%';
         container.style.height = '100%';
         container.style.zIndex = '9999';
-        container.style.display = 'flex';
-        container.style.flexDirection = 'column';
         
         // Create video element for camera feed
         const video = document.createElement('video');
@@ -27,44 +25,14 @@
         video.style.objectFit = 'cover';
         container.appendChild(video);
         
-        // Create model container that overlays the camera feed
-        const modelContainer = document.createElement('div');
-        modelContainer.id = 'ar-model-container';
-        modelContainer.style.position = 'absolute';
-        modelContainer.style.width = '100%';
-        modelContainer.style.height = '100%';
-        modelContainer.style.pointerEvents = 'none'; // Let interactions pass through to controls
-        modelContainer.style.display = 'flex';
-        modelContainer.style.justifyContent = 'center';
-        modelContainer.style.alignItems = 'center';
-        container.appendChild(modelContainer);
-        
-        // Create iframe for the 3D model with transparent background
-        const modelFrame = document.createElement('iframe');
-        modelFrame.id = "sketchfab-frame";
-        modelFrame.title = "AR 3D Model";
-        modelFrame.frameBorder = "0";
-        modelFrame.allowFullscreen = true;
-        modelFrame.setAttribute("mozallowfullscreen", "true");
-        modelFrame.setAttribute("webkitallowfullscreen", "true");
-        modelFrame.allow = "autoplay; fullscreen; xr-spatial-tracking";
-        modelFrame.setAttribute("xr-spatial-tracking", "");
-        modelFrame.setAttribute("execution-while-out-of-viewport", "");
-        modelFrame.setAttribute("execution-while-not-rendered", "");
-        modelFrame.setAttribute("web-share", "");
-        // Use API parameters for transparent background
-        modelFrame.src = `https://sketchfab.com/models/${modelId}/embed?autostart=1&ui_infos=0&ui_controls=0&ui_stop=0&transparent=1&ui_watermark=0&ui_help=0&ui_settings=0&ui_inspector=0&ui_annotations=0`;
-        modelFrame.style.width = '80%';
-        modelFrame.style.height = '60%';
-        modelFrame.style.backgroundColor = 'transparent';
-        modelFrame.style.pointerEvents = 'auto'; // Allow interaction with the model
-        modelContainer.appendChild(modelFrame);
-        
-        // Load Sketchfab API script
-        const sketchfabApiScript = document.createElement('script');
-        sketchfabApiScript.src = 'https://static.sketchfab.com/api/sketchfab-viewer-1.12.1.js';
-        sketchfabApiScript.async = true;
-        document.head.appendChild(sketchfabApiScript);
+        // Create canvas for 3D model that overlays the camera feed
+        const canvas = document.createElement('canvas');
+        canvas.id = 'ar-model-canvas';
+        canvas.style.position = 'absolute';
+        canvas.style.width = '100%';
+        canvas.style.height = '100%';
+        canvas.style.pointerEvents = 'none';
+        container.appendChild(canvas);
         
         // Create UI controls container
         const controlsContainer = document.createElement('div');
@@ -117,6 +85,130 @@
         
         // Stream variable to store camera stream
         let stream = null;
+        // Three.js variables
+        let scene, camera, renderer, model, mixer, clock;
+        let isModelLoaded = false;
+
+        // Load Three.js script
+        function loadThreeJS() {
+            return new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = 'https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js';
+                script.onload = resolve;
+                script.onerror = reject;
+                document.head.appendChild(script);
+            });
+        }
+
+        // Load GLTFLoader script
+        function loadGLTFLoader() {
+            return new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = 'https://cdn.jsdelivr.net/npm/three@0.149.0/examples/js/loaders/GLTFLoader.js';
+                script.onload = resolve;
+                script.onerror = reject;
+                document.head.appendChild(script);
+            });
+        }
+
+        // Initialize Three.js scene
+        function initThreeJS() {
+            scene = new THREE.Scene();
+            
+            // Camera setup
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 5;
+            
+            // Renderer setup
+            renderer = new THREE.WebGLRenderer({ 
+                canvas: canvas,
+                alpha: true // Important for transparency
+            });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setClearColor(0x000000, 0); // Transparent background
+            
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+            
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(0, 1, 1);
+            scene.add(directionalLight);
+            
+            // Load model
+            const loader = new THREE.GLTFLoader();
+            clock = new THREE.Clock();
+            
+            loader.load(
+                glbPath, // URL of the GLB file
+                function(gltf) {
+                    model = gltf.scene;
+                    
+                    // Center the model
+                    const box = new THREE.Box3().setFromObject(model);
+                    const center = box.getCenter(new THREE.Vector3());
+                    model.position.x = -center.x;
+                    model.position.y = -center.y;
+                    model.position.z = -center.z;
+                    
+                    // Scale model to reasonable size
+                    const size = box.getSize(new THREE.Vector3());
+                    const maxDim = Math.max(size.x, size.y, size.z);
+                    const scale = 2 / maxDim; // Adjust as needed
+                    model.scale.set(scale, scale, scale);
+                    
+                    // Add model to scene
+                    scene.add(model);
+                    
+                    // Setup animation if available
+                    if (gltf.animations && gltf.animations.length) {
+                        mixer = new THREE.AnimationMixer(model);
+                        const action = mixer.clipAction(gltf.animations[0]);
+                        action.play();
+                    }
+                    
+                    isModelLoaded = true;
+                    statusIndicator.innerText = 'Model loaded successfully';
+                    setTimeout(() => {
+                        statusIndicator.style.opacity = '0';
+                        statusIndicator.style.transition = 'opacity 0.5s ease-out';
+                    }, 2000);
+                },
+                function(xhr) {
+                    const percent = xhr.loaded / xhr.total * 100;
+                    statusIndicator.innerText = `Loading model: ${Math.round(percent)}%`;
+                },
+                function(error) {
+                    console.error('Error loading GLB model:', error);
+                    statusIndicator.innerText = 'Failed to load 3D model';
+                    statusIndicator.style.backgroundColor = 'rgba(255, 0, 0, 0.7)';
+                }
+            );
+            
+            // Handle window resize
+            window.addEventListener('resize', function() {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+            
+            // Animation loop
+            function animate() {
+                requestAnimationFrame(animate);
+                
+                if (model) {
+                    model.rotation.y += 0.005; // Slow rotation for effect
+                }
+                
+                if (mixer) {
+                    mixer.update(clock.getDelta());
+                }
+                
+                renderer.render(scene, camera);
+            }
+            
+            animate();
+        }
         
         // Function to initialize the camera
         async function initCamera() {
@@ -126,14 +218,19 @@
                     audio: false 
                 });
                 video.srcObject = stream;
-                statusIndicator.innerText = 'AR Experience Ready';
-                setTimeout(() => {
-                    statusIndicator.style.opacity = '0';
-                    statusIndicator.style.transition = 'opacity 0.5s ease-out';
-                }, 2000);
+                statusIndicator.innerText = 'Camera ready, loading model...';
                 
-                // Initialize Sketchfab API when camera is ready
-                initSketchfabAPI();
+                // Load Three.js dependencies
+                try {
+                    await loadThreeJS();
+                    await loadGLTFLoader();
+                    initThreeJS();
+                } catch (error) {
+                    console.error('Error loading Three.js:', error);
+                    statusIndicator.innerText = 'Failed to load 3D engine';
+                    statusIndicator.style.backgroundColor = 'rgba(255, 0, 0, 0.7)';
+                }
+                
             } catch (error) {
                 console.error('Error accessing camera:', error);
                 statusIndicator.innerText = 'Camera access denied';
@@ -141,48 +238,31 @@
             }
         }
         
-        // Function to initialize Sketchfab API
-        function initSketchfabAPI() {
-            // Wait for API to load
-            if (typeof window.Sketchfab !== 'function') {
-                setTimeout(initSketchfabAPI, 100);
+        // Function to take screenshot
+        function takeScreenshot() {
+            if (!isModelLoaded) {
+                statusIndicator.innerText = 'Wait for model to load';
+                statusIndicator.style.opacity = '1';
+                setTimeout(() => {
+                    statusIndicator.style.opacity = '0';
+                }, 2000);
                 return;
             }
             
-            const iframe = document.getElementById('sketchfab-frame');
-            const client = new window.Sketchfab(iframe);
-            
-            client.init(modelFrame.src, {
-                success: function onSuccess(api) {
-                    api.start();
-                    api.addEventListener('viewerready', function() {
-                        // Set transparent background when viewer is ready
-                        api.setBackground({
-                            color: [0, 0, 0, 0] // RGBA with 0 alpha for transparency
-                        });
-                    });
-                },
-                error: function onError() {
-                    console.error('Sketchfab API initialization failed');
-                    statusIndicator.innerText = 'Failed to load 3D model';
-                    statusIndicator.style.backgroundColor = 'rgba(255, 0, 0, 0.7)';
-                    statusIndicator.style.opacity = '1';
-                }
-            });
-        }
-        
-        // Function to take screenshot
-        function takeScreenshot() {
-            const canvas = document.createElement('canvas');
-            canvas.width = container.clientWidth;
-            canvas.height = container.clientHeight;
-            const ctx = canvas.getContext('2d');
+            // Create a canvas that combines video and THREE.js canvas
+            const screenshotCanvas = document.createElement('canvas');
+            screenshotCanvas.width = container.clientWidth;
+            screenshotCanvas.height = container.clientHeight;
+            const ctx = screenshotCanvas.getContext('2d');
             
             // Draw video first (background)
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            ctx.drawImage(video, 0, 0, screenshotCanvas.width, screenshotCanvas.height);
+            
+            // Draw the Three.js canvas on top
+            ctx.drawImage(canvas, 0, 0, screenshotCanvas.width, screenshotCanvas.height);
             
             // Create temporary image for download
-            const image = canvas.toDataURL('image/png');
+            const image = screenshotCanvas.toDataURL('image/png');
             const link = document.createElement('a');
             link.href = image;
             link.download = 'ar-screenshot-' + new Date().getTime() + '.png';
@@ -211,19 +291,88 @@
             if (stream) {
                 stream.getTracks().forEach(track => track.stop());
             }
+            
+            // Stop animation loop and release resources
+            if (renderer) {
+                renderer.dispose();
+            }
+            
             if (container.parentNode) {
                 container.parentNode.removeChild(container);
-            }
-            // Remove the Sketchfab API script
-            const apiScript = document.querySelector('script[src="https://static.sketchfab.com/api/sketchfab-viewer-1.12.1.js"]');
-            if (apiScript && apiScript.parentNode) {
-                apiScript.parentNode.removeChild(apiScript);
             }
         }
         
         // Event listeners
         closeButton.addEventListener('click', closeAR);
         screenshotButton.addEventListener('click', takeScreenshot);
+        
+        // Adding interactive model controls
+        let isDragging = false;
+        let previousMousePosition = { x: 0, y: 0 };
+        
+        canvas.addEventListener('mousedown', function(event) {
+            isDragging = true;
+            previousMousePosition = {
+                x: event.clientX,
+                y: event.clientY
+            };
+        });
+        
+        canvas.addEventListener('mouseup', function() {
+            isDragging = false;
+        });
+        
+        canvas.addEventListener('mousemove', function(event) {
+            if (isDragging && model) {
+                const deltaMove = {
+                    x: event.clientX - previousMousePosition.x,
+                    y: event.clientY - previousMousePosition.y
+                };
+                
+                model.rotation.y += deltaMove.x * 0.01;
+                model.rotation.x += deltaMove.y * 0.01;
+                
+                previousMousePosition = {
+                    x: event.clientX,
+                    y: event.clientY
+                };
+            }
+        });
+        
+        // Touch controls for mobile
+        canvas.addEventListener('touchstart', function(event) {
+            isDragging = true;
+            previousMousePosition = {
+                x: event.touches[0].clientX,
+                y: event.touches[0].clientY
+            };
+            event.preventDefault();
+        });
+        
+        canvas.addEventListener('touchend', function() {
+            isDragging = false;
+        });
+        
+        canvas.addEventListener('touchmove', function(event) {
+            if (isDragging && model) {
+                const deltaMove = {
+                    x: event.touches[0].clientX - previousMousePosition.x,
+                    y: event.touches[0].clientY - previousMousePosition.y
+                };
+                
+                model.rotation.y += deltaMove.x * 0.01;
+                model.rotation.x += deltaMove.y * 0.01;
+                
+                previousMousePosition = {
+                    x: event.touches[0].clientX,
+                    y: event.touches[0].clientY
+                };
+            }
+            event.preventDefault();
+        });
+        
+        // Enable pointer events on canvas for interaction
+        canvas.style.pointerEvents = 'auto';
         
         // Expose the public API
         return {
@@ -232,10 +381,63 @@
                 initCamera();
             },
             stop: closeAR,
-            setModel: function(newModelId) {
-                modelFrame.src = `https://sketchfab.com/models/${newModelId}/embed?autostart=1&ui_infos=0&ui_controls=0&ui_stop=0&transparent=1&ui_watermark=0&ui_help=0&ui_settings=0&ui_inspector=0&ui_annotations=0`;
-                // Re-initialize the Sketchfab API with the new model
-                initSketchfabAPI();
+            setModel: function(newGlbPath) {
+                // Remove current model if exists
+                if (model) {
+                    scene.remove(model);
+                }
+                
+                // Load new model
+                glbPath = newGlbPath;
+                isModelLoaded = false;
+                statusIndicator.innerText = 'Loading new model...';
+                statusIndicator.style.opacity = '1';
+                
+                const loader = new THREE.GLTFLoader();
+                loader.load(
+                    glbPath,
+                    function(gltf) {
+                        model = gltf.scene;
+                        
+                        // Center the model
+                        const box = new THREE.Box3().setFromObject(model);
+                        const center = box.getCenter(new THREE.Vector3());
+                        model.position.x = -center.x;
+                        model.position.y = -center.y;
+                        model.position.z = -center.z;
+                        
+                        // Scale model to reasonable size
+                        const size = box.getSize(new THREE.Vector3());
+                        const maxDim = Math.max(size.x, size.y, size.z);
+                        const scale = 2 / maxDim; // Adjust as needed
+                        model.scale.set(scale, scale, scale);
+                        
+                        // Add model to scene
+                        scene.add(model);
+                        
+                        // Setup animation if available
+                        if (gltf.animations && gltf.animations.length) {
+                            mixer = new THREE.AnimationMixer(model);
+                            const action = mixer.clipAction(gltf.animations[0]);
+                            action.play();
+                        }
+                        
+                        isModelLoaded = true;
+                        statusIndicator.innerText = 'Model loaded successfully';
+                        setTimeout(() => {
+                            statusIndicator.style.opacity = '0';
+                        }, 2000);
+                    },
+                    function(xhr) {
+                        const percent = xhr.loaded / xhr.total * 100;
+                        statusIndicator.innerText = `Loading model: ${Math.round(percent)}%`;
+                    },
+                    function(error) {
+                        console.error('Error loading GLB model:', error);
+                        statusIndicator.innerText = 'Failed to load 3D model';
+                        statusIndicator.style.backgroundColor = 'rgba(255, 0, 0, 0.7)';
+                    }
+                );
             }
         };
     };
@@ -243,7 +445,3 @@
     // Export the SDK to global scope
     global.ARJS = ARJS;
 })(window);
-
-// Usage:
-// const arExperience = ARJS.createARExperience();
-// arExperience.start();
